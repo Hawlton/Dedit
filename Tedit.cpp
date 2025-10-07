@@ -175,7 +175,55 @@ int main()
 	}
 
 	CONSOLE_SCREEN_BUFFER_INFO csbi;
+	if(!GetConsoleScreenBufferInfo(stdout_handle, &csbi))
+	{
+		cerr << "Error getting console screen buffer info" << endl;
+		return 1;
+	};
 
+	DWORD console_size = csbi.dwSize.X * csbi.dwSize.Y;
+	COORD coord_screen = { 0, 0 };
+	DWORD chars_written;
+
+	FillConsoleOutputCharacter(stdout_handle, ' ', console_size, coord_screen, &chars_written);
+	FillConsoleOutputAttribute(stdout_handle, csbi.wAttributes, console_size, coord_screen, &chars_written);
+	SetConsoleCursorPosition(stdout_handle, coord_screen);
+
+	cout << "Testing windows API calls " << endl;
+
+	HANDLE stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
+	if(stdin_handle == INVALID_HANDLE_VALUE)
+	{
+		cerr << "Error getting stdin handle" << endl;
+		return 1;
+	}
+
+	INPUT_RECORD input_record;
+	DWORD events_read;
+
+	cout << "Press 'q' to quit" << endl;
+
+	while (true)
+	{
+		if (!ReadConsoleInput(stdin_handle, &input_record, 1, &events_read))
+		{
+			cerr << "Error reading console input" << endl;
+			break;
+		}
+		if(input_record.EventType == KEY_EVENT && input_record.Event.KeyEvent.bKeyDown)
+		{
+			char ch = input_record.Event.KeyEvent.uChar.AsciiChar;
+			cout << "Key pressed: " << ch << endl;
+			if(ch == 'q')
+			{
+				cout << "Quitting..." << endl;
+				break;
+			}
+			
+		}
+
+	}
+	return 0;
 
 
 }
