@@ -8,8 +8,6 @@
 
 using namespace std;
 
-//forward declarations
-
 
 struct LineBuffer
 {
@@ -50,29 +48,34 @@ struct LineBuffer
 		size = new_size;
 		gap_end = new_gap_end;
 
-		cout << "Buffer expanded to: [" << size << "] bytes";
 
 	}
 
 	void move_gap(int new_cursor_pos)
 	{
-		new_cursor_pos = max(new_cursor_pos, line_length);
-		new_cursor_pos = min(0, new_cursor_pos);
+		new_cursor_pos = min(new_cursor_pos, line_length);
+		new_cursor_pos = max(0, new_cursor_pos);
 
 		if (new_cursor_pos == gap_start) return;
 		if (new_cursor_pos < gap_start)
 		{
-			int shift_amount = gap_start - new_cursor_pos;
-			memmove(data + (gap_end - shift_amount), data + new_cursor_pos, shift_amount);
-			gap_start -= shift_amount;
-			gap_end -= shift_amount;
+			int count = gap_start - new_cursor_pos;
+			while (count--)
+			{
+				gap_start--;
+				gap_end--;
+				data[gap_end] = data[gap_start];
+			}
 		}
 		else
 		{
-			int shift_amount = new_cursor_pos - gap_start;
-			memmove(data + gap_start, data + gap_end, shift_amount);
-			gap_start += shift_amount;
-			gap_end += shift_amount;
+			int count = new_cursor_pos - gap_start;
+			while (count--)
+			{
+				data[gap_start] = data[gap_end];
+				gap_start++;
+				gap_end++;
+			}
 
 		}
 	}
@@ -86,22 +89,35 @@ struct LineBuffer
 		data[gap_start] = c;
 		gap_start++;
 		line_length++;
-			
+	}
+
+	bool backspace_button()
+	{
+		if (gap_start == 0) return false;
+		gap_start--;
+		line_length--;
+		return true;
+	}
+
+	bool delete_button()
+	{
+		int tail = line_length - gap_start;
+		if (tail == 0) return false;
+		gap_end++;
+		line_length--;
+		return true;
 	}
 
 	void draw_line() const
 	{
-		for (int i = 0; i < gap_start; i++)
+		if (gap_start > 0)
 		{
-			cout << data[i];
+			cout.write(data, gap_start);
 		}
-		for (int i = gap_start; i < size; i++)
+		int tail = line_length - gap_start;
+		if (tail > 0)
 		{
-			//only print to the end of the logical line
-			if (i < gap_end + (line_length - gap_start))
-			{
-				cout << data[i];
-			}
+			cout.write(data + gap_end, tail);
 		}
 	}
 
@@ -131,6 +147,26 @@ LineBuffer* create_line_buffer()
 	line->data = new char[line->size];
 	return line;
 
+}
+
+void redraw_line(HANDLE out, LineBuffer* line, SHORT row, int& last_drawn_length)
+{
+	COORD redraw_pos = { 0, row };
+	SetConsoleCursorPosition(out, redraw_pos);
+	line->draw_line();
+	if (line->line_length < last_drawn_length)
+	{
+		//clear the rest of the line if it got shorter
+		for (int i = line->line_length; i < last_drawn_length; i++)
+		{
+			cout << ' ';
+		}
+		SetConsoleCursorPosition(out, { (SHORT)line->line_length, row });
+	}
+	last_drawn_length = line->line_length;
+	COORD carrot = { (SHORT)line->gap_start, row };
+	SetConsoleCursorPosition(out, carrot);
+	cout.flush();
 }
 
 void insert_new_line(TextFile* tf, int current_row)
@@ -189,7 +225,6 @@ int main()
 	FillConsoleOutputAttribute(stdout_handle, csbi.wAttributes, console_size, coord_screen, &chars_written);
 	SetConsoleCursorPosition(stdout_handle, coord_screen);
 
-	cout << "Testing windows API calls " << endl;
 
 	HANDLE stdin_handle = GetStdHandle(STD_INPUT_HANDLE);
 	if(stdin_handle == INVALID_HANDLE_VALUE)
@@ -197,32 +232,75 @@ int main()
 		cerr << "Error getting stdin handle" << endl;
 		return 1;
 	}
-
+	LineBuffer* line = create_line_buffer();
 	INPUT_RECORD input_record;
 	DWORD events_read;
+	int last_drawn_length = 0;
+	const SHORT edit_row = 1;
 
-	cout << "Press 'q' to quit" << endl;
+	cout << "press 'Esc' to quit" << endl;
+	bool running = true;
 
-	while (true)
+	while (running)
 	{
 		if (!ReadConsoleInput(stdin_handle, &input_record, 1, &events_read))
 		{
 			cerr << "Error reading console input" << endl;
 			break;
 		}
-		if(input_record.EventType == KEY_EVENT && input_record.Event.KeyEvent.bKeyDown)
-		{
-			char ch = input_record.Event.KeyEvent.uChar.AsciiChar;
-			cout << "Key pressed: " << ch << endl;
-			if(ch == 'q')
-			{
-				cout << "Quitting..." << endl;
-				break;
-			}
+		if (input_record.EventType != KEY_EVENT) continue;
+
+		const KEY_EVENT_RECORD& key_event = input_record.Event.KeyEvent;
+		if (!key_event.bKeyDown) continue;
+
+		bool redraw = false;
+		char ch = key_event.uChar.AsciiChar;
 			
+			
+		switch (key_event.wVirtualKeyCode)
+		{
+		case VK_ESCAPE:
+			cout << "quitting..." << endl;
+			running = false;
+			break;
+		case VK_LEFT:
+			line->move_gap(line->gap_start - 1);
+			redraw = true;
+			break;
+		case VK_RIGHT:
+			line->move_gap(line->gap_start + 1);
+			redraw = true;
+			break;
+		case VK_HOME:
+			line->move_gap(0);
+			redraw = true;
+			break;
+		case VK_END:
+			line->move_gap(line->line_length);
+			redraw = true;
+			break;
+		case VK_BACK:
+			if (line->backspace_button()) redraw = true;
+			break;
+		case VK_DELETE:
+			if (line->delete_button()) redraw = true;
+			break;
+		default:
+			if(ch >= 32 && ch <= 127) //printable ASCII range
+			{
+				line->insert_character(ch);
+				redraw = true;
+			}
+			break;
+		}
+		if (redraw)
+		{
+			redraw_line(stdout_handle, line, edit_row, last_drawn_length);
 		}
 
 	}
+	delete[] line->data;
+	delete line;
 	return 0;
 
 
